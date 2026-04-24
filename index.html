@@ -1660,6 +1660,11 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 0.8rem;
   padding: 20px;
 }
+.known-item-lastseen {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
 
 /* PID controls */
 .pid-controls {
@@ -2541,11 +2546,18 @@ input[type="range"]::-webkit-slider-thumb {
           <div class="empty-state">No faces registered yet.</div>
         </div>
 
+        <div class="btn-row" style="margin-top:6px;margin-bottom:0">
+          <button class="btn-ghost" id="btn-export-visits">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export Visit Log
+          </button>
+        </div>
+
         <div class="info-card">
           <strong>How it works</strong><br>
-          MediaPipe extracts a 200-dim face embedding each frame. Cosine similarity is computed against each registered face. The closest match above the threshold is shown.
+          MediaPipe extracts a 300-dim face descriptor per frame using 100 aligned landmarks. Top-K cosine similarity is computed against enrolled samples. The closest match above the threshold is shown.
           <br><br>
-          <strong>Tips:</strong> register 3–5 samples of the same person from different angles for best accuracy. Saved in localStorage — persists on refresh.
+          <strong>Tips:</strong> register 5–10 samples from different angles for best accuracy. Descriptors auto-update on high-confidence matches. Visit history is logged and exportable as CSV.
         </div>
       </div>
     </div>
@@ -3078,6 +3090,14 @@ function makeFPSTracker() {
   };
 }
 
+function timeAgo(ts) {
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 60)    return sec + "s ago";
+  if (sec < 3600)  return Math.floor(sec / 60) + "m ago";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h ago";
+  return Math.floor(sec / 86400) + "d ago";
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared: IoU-based multi-person tracker
@@ -3436,7 +3456,7 @@ function classifyEmotion(blendshapes) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. Face Identification
 // ─────────────────────────────────────────────────────────────────────────────
-(function () {
+(async function () {
   const video         = document.getElementById("video-identify");
   const canvas        = document.getElementById("canvas-identify");
   const ctx           = canvas.getContext("2d");
@@ -3537,24 +3557,51 @@ function classifyEmotion(blendshapes) {
     setTimeout(() => btnSnapId.classList.remove("snap-flash"), 300);
   });
 
-  // ── Face database (persisted in localStorage) ────────────────────────────
-  const LS_KEY = "facelab_known_faces_v2";
-  let knownFaces = []; // { name, descriptors: [[...], ...], avatar: dataURL|null }
+  // ── Face database (persisted in IndexedDB) ───────────────────────────────
+  const LS_KEY    = "facelab_known_faces_v2"; // kept for migration read
+  const IDB_NAME  = "facelab-db";
+  const IDB_STORE = "faces";
+  let knownFaces = []; // { name, descriptors: [[...], ...], avatar: dataURL|null, visits: [] }
 
-  // Persistence helpers — use localStorage when available, silently skip when not
-  const canStore = (() => { try { localStorage.setItem("__fl_test","1"); localStorage.removeItem("__fl_test"); return true; } catch { return false; } })();
-  function loadFromStorage() {
-    if (!canStore) return;
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (raw) knownFaces = JSON.parse(raw);
-    } catch { knownFaces = []; }
+  let _db = null;
+  let canStore = false;
+
+  function initDB() {
+    return new Promise((resolve) => {
+      if (!window.indexedDB) { resolve(false); return; }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = (e) => e.target.result.createObjectStore(IDB_STORE, { keyPath: "id" });
+      req.onsuccess = (e) => { _db = e.target.result; resolve(true); };
+      req.onerror   = ()  => resolve(false);
+    });
   }
+
+  async function loadFromStorage() {
+    const ok = await initDB();
+    if (!ok) {
+      try { const raw = localStorage.getItem(LS_KEY); if (raw) knownFaces = JSON.parse(raw); } catch {}
+      return;
+    }
+    canStore = true;
+    await new Promise((resolve) => {
+      const req = _db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(1);
+      req.onsuccess = (e) => { if (e.target.result?.data) knownFaces = e.target.result.data; resolve(); };
+      req.onerror   = () => resolve();
+    });
+    // Migrate data from localStorage if IndexedDB is empty
+    if (!knownFaces.length) {
+      try { const raw = localStorage.getItem(LS_KEY); if (raw) knownFaces = JSON.parse(raw); } catch {}
+    }
+  }
+
   function saveToStorage() {
-    if (!canStore) return;
-    try { localStorage.setItem(LS_KEY, JSON.stringify(knownFaces)); } catch {}
+    if (!canStore || !_db) return;
+    _db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put({ id: 1, data: knownFaces });
   }
-  loadFromStorage();
+
+  await loadFromStorage();
+  // Ensure every face entry has a visits array (migration for existing data)
+  knownFaces.forEach(kf => { if (!kf.visits) kf.visits = []; });
 
   // ── Descriptor math ──────────────────────────────────────────────────────
   // 100 stable FaceMesh landmark indices covering geometry + expression
@@ -3574,6 +3621,24 @@ function classifyEmotion(blendshapes) {
       if (landmarks[i]) desc.push(landmarks[i].x, landmarks[i].y, landmarks[i].z);
     }
     return desc;
+  }
+
+  // Align landmarks so the eye line is horizontal and inter-ocular distance = 1.
+  // Makes descriptors invariant to face tilt, position, and scale in the frame.
+  function alignLandmarks(landmarks) {
+    const L = landmarks;
+    if (!L[33] || !L[133] || !L[263] || !L[362]) return landmarks;
+    const lx = (L[33].x + L[133].x) * 0.5,  ly = (L[33].y + L[133].y) * 0.5;
+    const rx = (L[263].x + L[362].x) * 0.5, ry = (L[263].y + L[362].y) * 0.5;
+    const angle = -Math.atan2(ry - ly, rx - lx);
+    const cos   =  Math.cos(angle), sin = Math.sin(angle);
+    const cx = (lx + rx) * 0.5,    cy = (ly + ry) * 0.5;
+    const iod = Math.hypot(rx - lx, ry - ly) || 1;
+    return L.map(pt => {
+      if (!pt) return pt;
+      const tx = pt.x - cx, ty = pt.y - cy;
+      return { x: (tx * cos - ty * sin) / iod, y: (tx * sin + ty * cos) / iod, z: pt.z / iod };
+    });
   }
 
   function normalize(desc) {
@@ -3602,10 +3667,12 @@ function classifyEmotion(blendshapes) {
   function findMatch(desc) {
     let best = null, bestSim = 0;
     const threshold = getThreshold();
+    const TOP_K = 3;
     for (const kf of knownFaces) {
-      // Compare against average descriptor
-      const avgDesc = avgDescriptors(kf.descriptors);
-      const sim = cosine(desc, avgDesc);
+      if (!kf.descriptors.length) continue;
+      // Score against every enrolled sample, average the top-K scores
+      const sims = kf.descriptors.map(d => cosine(desc, d)).sort((a, b) => b - a).slice(0, TOP_K);
+      const sim  = sims.reduce((a, b) => a + b, 0) / sims.length;
       if (sim > bestSim) { bestSim = sim; best = kf; }
     }
     if (bestSim >= threshold) return { person: best, sim: bestSim, pct: Math.round(bestSim * 100) };
@@ -3655,7 +3722,7 @@ function classifyEmotion(blendshapes) {
       try {
         const result = faceLandmarker.detectForVideo(video, performance.now());
         if (result.faceLandmarks.length > 0) {
-          const desc = normalize(toDescriptor(result.faceLandmarks[0]));
+          const desc = normalize(toDescriptor(alignLandmarks(result.faceLandmarks[0])));
           capturePending.samples.push(desc);
           const n = capturePending.samples.length;
           captureBar.style.width = `${(n / capturePending.total) * 100}%`;
@@ -3688,7 +3755,7 @@ function classifyEmotion(blendshapes) {
     } else {
       // Capture avatar from current frame
       const avatar = captureAvatar();
-      knownFaces.push({ name, descriptors: samples, avatar });
+      knownFaces.push({ name, descriptors: samples, avatar, visits: [] });
     }
     saveToStorage();
     updateKnownList();
@@ -3754,7 +3821,7 @@ function classifyEmotion(blendshapes) {
         alert("No face found in the photo. Try a clearer front-facing image.");
         return;
       }
-      const desc = normalize(toDescriptor(result.faceLandmarks[0]));
+      const desc = normalize(toDescriptor(alignLandmarks(result.faceLandmarks[0])));
       const avatarUrl = tmp.toDataURL("image/jpeg", 0.6);
 
       const existing = knownFaces.find(kf => kf.name.toLowerCase() === name.toLowerCase());
@@ -3762,7 +3829,7 @@ function classifyEmotion(blendshapes) {
         existing.descriptors.push(desc);
         if (existing.descriptors.length > 20) existing.descriptors = existing.descriptors.slice(-20);
       } else {
-        knownFaces.push({ name, descriptors: [desc], avatar: avatarUrl });
+        knownFaces.push({ name, descriptors: [desc], avatar: avatarUrl, visits: [] });
       }
       saveToStorage();
       updateKnownList();
@@ -3785,11 +3852,14 @@ function classifyEmotion(blendshapes) {
       const avatarEl = kf.avatar
         ? `<img class="known-avatar" src="${kf.avatar}" alt="${kf.name}" />`
         : `<div class="known-avatar-placeholder">${kf.name[0].toUpperCase()}</div>`;
+      const lastVisit   = kf.visits?.length ? kf.visits[kf.visits.length - 1] : null;
+      const lastSeenStr = lastVisit ? `Last seen: ${timeAgo(lastVisit.ts)}` : "Never seen";
       div.innerHTML = `
         ${avatarEl}
         <div class="known-item-info">
           <span class="known-item-name">${kf.name}</span>
           <span class="known-item-samples">${kf.descriptors.length} sample${kf.descriptors.length !== 1 ? 's' : ''}</span>
+          <span class="known-item-lastseen">${lastSeenStr}</span>
         </div>
         <button class="del" data-idx="${i}" title="Remove">✕</button>`;
       div.querySelector(".del").addEventListener("click", () => {
@@ -3828,13 +3898,35 @@ function classifyEmotion(blendshapes) {
     e.target.value = "";
   });
 
+  // Export visit history as CSV
+  document.getElementById("btn-export-visits")?.addEventListener("click", () => {
+    if (!knownFaces.some(kf => kf.visits?.length)) { alert("No visit history recorded yet."); return; }
+    const rows = ["Name,Date,Time,Confidence%"];
+    for (const kf of knownFaces) {
+      for (const v of (kf.visits || [])) {
+        const d = new Date(v.ts);
+        rows.push(`"${kf.name.replace(/"/g,'""')}",${d.toLocaleDateString()},${d.toLocaleTimeString()},${v.conf}`);
+      }
+    }
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = "facelab_visits.csv"; a.click();
+    URL.revokeObjectURL(url);
+  });
+
   // ── Main recognition loop ────────────────────────────────────────────────
   let running = false;
   let rafId   = null;
   const fps   = makeFPSTracker();
 
-  // Banner state
+  // Banner + drift + visit-log state
   let lastMatchName = null;
+  let driftDirty = false;
+  const VISIT_DEBOUNCE_MS = 30000;
+  const VISIT_MAX = 500;
+  const _lastVisitTs = new Map();
+  setInterval(() => { if (driftDirty) { saveToStorage(); driftDirty = false; } }, 5000);
 
   function updateBanner(match, emotion) {
     // Update emotion badge
@@ -3909,7 +4001,7 @@ function classifyEmotion(blendshapes) {
     }
 
     result.faceLandmarks.forEach((landmarks, fi) => {
-      const desc  = normalize(toDescriptor(landmarks));
+      const desc  = normalize(toDescriptor(alignLandmarks(landmarks)));
       const track = tracked[fi];
       const bx = track.x, by = track.y, bw = track.w, bh = track.h;
 
@@ -3919,6 +4011,27 @@ function classifyEmotion(blendshapes) {
 
       const match = findMatch(desc);
       if (match && (!topMatch || match.sim > topMatch.sim)) topMatch = match;
+
+      // Visit history: log first recognition per person per 30-second window (face 0 only)
+      if (match && fi === 0) {
+        const now  = Date.now();
+        const last = _lastVisitTs.get(match.person.name) || 0;
+        if (now - last >= VISIT_DEBOUNCE_MS) {
+          _lastVisitTs.set(match.person.name, now);
+          const visits = match.person.visits || (match.person.visits = []);
+          visits.push({ ts: now, conf: match.pct });
+          if (visits.length > VISIT_MAX) visits.splice(0, visits.length - VISIT_MAX);
+          driftDirty = true;
+        }
+      }
+
+      // Descriptor drift: high-confidence frames silently improve enrollment
+      if (match && match.sim >= 0.96) {
+        match.person.descriptors.push(desc);
+        if (match.person.descriptors.length > 20)
+          match.person.descriptors = match.person.descriptors.slice(-20);
+        driftDirty = true;
+      }
 
       // Per-face color: matched = teal, unknown = red, use track color for ID label
       const color  = match ? "#00e5ff" : "#ff5252";
