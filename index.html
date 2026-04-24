@@ -1660,6 +1660,11 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 0.8rem;
   padding: 20px;
 }
+.known-item-lastseen {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
 
 /* PID controls */
 .pid-controls {
@@ -1705,6 +1710,8 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* Analysis layout */
+.hidden { display: none !important; }
+
 .analysis-layout {
   display: flex;
   flex-direction: column;
@@ -1717,14 +1724,18 @@ input[type="range"]::-webkit-slider-thumb {
   flex-wrap: wrap;
 }
 .analysis-stats {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+@media (max-width: 480px) {
+  .analysis-stats { grid-template-columns: repeat(2, 1fr); }
 }
 .charts-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 16px;
   position: relative;
 }
 @media (max-width: 768px) {
@@ -1734,15 +1745,27 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 20px;
+  padding: 16px 16px 12px;
+}
+.chart-card canvas {
+  max-height: 180px;
 }
 .chart-title {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-title-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 .empty-charts {
   position: absolute;
@@ -1757,6 +1780,47 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--bg);
   border-radius: 16px;
 }
+.insights-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 20px;
+  grid-column: 1 / -1;
+}
+.insights-header {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 14px;
+}
+.insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.insight-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.insight-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 1px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.badge-good  { background: rgba(46,204,135,0.15); color: #2ecc87; }
+.badge-fair  { background: rgba(243,156,18,0.15);  color: #f39c12; }
+.badge-poor  { background: rgba(231,76,60,0.15);   color: #e74c3c; }
+.insight-text { font-size: 0.82rem; line-height: 1.5; color: var(--text); }
+.insight-label { font-weight: 700; display: block; margin-bottom: 1px; }
 
 /* ══════════════════════════════════════════════════════════════
    APP VIEW — MOBILE RESPONSIVE
@@ -2541,11 +2605,18 @@ input[type="range"]::-webkit-slider-thumb {
           <div class="empty-state">No faces registered yet.</div>
         </div>
 
+        <div class="btn-row" style="margin-top:6px;margin-bottom:0">
+          <button class="btn-ghost" id="btn-export-visits">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export Visit Log
+          </button>
+        </div>
+
         <div class="info-card">
           <strong>How it works</strong><br>
-          MediaPipe extracts a 200-dim face embedding each frame. Cosine similarity is computed against each registered face. The closest match above the threshold is shown.
+          MediaPipe extracts a 300-dim face descriptor per frame using 100 aligned landmarks. Top-K cosine similarity is computed against enrolled samples. The closest match above the threshold is shown.
           <br><br>
-          <strong>Tips:</strong> register 3–5 samples of the same person from different angles for best accuracy. Saved in localStorage — persists on refresh.
+          <strong>Tips:</strong> register 5–10 samples from different angles for best accuracy. Descriptors auto-update on high-confidence matches. Visit history is logged and exportable as CSV.
         </div>
       </div>
     </div>
@@ -2647,26 +2718,32 @@ input[type="range"]::-webkit-slider-thumb {
           <div class="stat-card"><div class="stat-val" id="as-duration">—</div><div class="stat-label">Duration</div></div>
           <div class="stat-card"><div class="stat-val" id="as-mean-err">—</div><div class="stat-label">Mean Error</div></div>
           <div class="stat-card"><div class="stat-val" id="as-centered">—</div><div class="stat-label">% Centered</div></div>
+          <div class="stat-card"><div class="stat-val" id="as-max-err">—</div><div class="stat-label">Max Error</div></div>
+          <div class="stat-card"><div class="stat-val" id="as-stability">—</div><div class="stat-label">Stability</div></div>
           <div class="stat-card"><div class="stat-val" id="as-rows">—</div><div class="stat-label">Frames</div></div>
         </div>
       </div>
 
       <div class="charts-grid" id="charts-grid">
         <div class="chart-card">
-          <div class="chart-title">Yaw Command vs Time</div>
+          <div class="chart-title"><span class="chart-title-dot" style="background:#e05c5c"></span>Tracking Error from Center</div>
+          <canvas id="chart-error"></canvas>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title"><span class="chart-title-dot" style="background:#00e5ff"></span>Yaw Command vs Time</div>
           <canvas id="chart-yaw"></canvas>
         </div>
         <div class="chart-card">
-          <div class="chart-title">Face X Position vs Time</div>
+          <div class="chart-title"><span class="chart-title-dot" style="background:#a86fdf"></span>Face X Position vs Time</div>
           <canvas id="chart-cx"></canvas>
         </div>
         <div class="chart-card">
-          <div class="chart-title">Face Area (distance proxy)</div>
+          <div class="chart-title"><span class="chart-title-dot" style="background:#f39c12"></span>Distance Proxy (Face Area)</div>
           <canvas id="chart-area"></canvas>
         </div>
-        <div class="chart-card">
-          <div class="chart-title">Horizontal Error from Center</div>
-          <canvas id="chart-error"></canvas>
+        <div class="insights-card hidden" id="analysis-insights">
+          <div class="insights-header">Session Insights</div>
+          <div class="insights-grid" id="insights-grid"></div>
         </div>
         <div class="empty-charts" id="empty-charts">
           <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -3078,6 +3155,14 @@ function makeFPSTracker() {
   };
 }
 
+function timeAgo(ts) {
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 60)    return sec + "s ago";
+  if (sec < 3600)  return Math.floor(sec / 60) + "m ago";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h ago";
+  return Math.floor(sec / 86400) + "d ago";
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared: IoU-based multi-person tracker
@@ -3436,7 +3521,7 @@ function classifyEmotion(blendshapes) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. Face Identification
 // ─────────────────────────────────────────────────────────────────────────────
-(function () {
+(async function () {
   const video         = document.getElementById("video-identify");
   const canvas        = document.getElementById("canvas-identify");
   const ctx           = canvas.getContext("2d");
@@ -3537,24 +3622,51 @@ function classifyEmotion(blendshapes) {
     setTimeout(() => btnSnapId.classList.remove("snap-flash"), 300);
   });
 
-  // ── Face database (persisted in localStorage) ────────────────────────────
-  const LS_KEY = "facelab_known_faces_v2";
-  let knownFaces = []; // { name, descriptors: [[...], ...], avatar: dataURL|null }
+  // ── Face database (persisted in IndexedDB) ───────────────────────────────
+  const LS_KEY    = "facelab_known_faces_v2"; // kept for migration read
+  const IDB_NAME  = "facelab-db";
+  const IDB_STORE = "faces";
+  let knownFaces = []; // { name, descriptors: [[...], ...], avatar: dataURL|null, visits: [] }
 
-  // Persistence helpers — use localStorage when available, silently skip when not
-  const canStore = (() => { try { localStorage.setItem("__fl_test","1"); localStorage.removeItem("__fl_test"); return true; } catch { return false; } })();
-  function loadFromStorage() {
-    if (!canStore) return;
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (raw) knownFaces = JSON.parse(raw);
-    } catch { knownFaces = []; }
+  let _db = null;
+  let canStore = false;
+
+  function initDB() {
+    return new Promise((resolve) => {
+      if (!window.indexedDB) { resolve(false); return; }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = (e) => e.target.result.createObjectStore(IDB_STORE, { keyPath: "id" });
+      req.onsuccess = (e) => { _db = e.target.result; resolve(true); };
+      req.onerror   = ()  => resolve(false);
+    });
   }
+
+  async function loadFromStorage() {
+    const ok = await initDB();
+    if (!ok) {
+      try { const raw = localStorage.getItem(LS_KEY); if (raw) knownFaces = JSON.parse(raw); } catch {}
+      return;
+    }
+    canStore = true;
+    await new Promise((resolve) => {
+      const req = _db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(1);
+      req.onsuccess = (e) => { if (e.target.result?.data) knownFaces = e.target.result.data; resolve(); };
+      req.onerror   = () => resolve();
+    });
+    // Migrate data from localStorage if IndexedDB is empty
+    if (!knownFaces.length) {
+      try { const raw = localStorage.getItem(LS_KEY); if (raw) knownFaces = JSON.parse(raw); } catch {}
+    }
+  }
+
   function saveToStorage() {
-    if (!canStore) return;
-    try { localStorage.setItem(LS_KEY, JSON.stringify(knownFaces)); } catch {}
+    if (!canStore || !_db) return;
+    _db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put({ id: 1, data: knownFaces });
   }
-  loadFromStorage();
+
+  await loadFromStorage();
+  // Ensure every face entry has a visits array (migration for existing data)
+  knownFaces.forEach(kf => { if (!kf.visits) kf.visits = []; });
 
   // ── Descriptor math ──────────────────────────────────────────────────────
   // 100 stable FaceMesh landmark indices covering geometry + expression
@@ -3574,6 +3686,24 @@ function classifyEmotion(blendshapes) {
       if (landmarks[i]) desc.push(landmarks[i].x, landmarks[i].y, landmarks[i].z);
     }
     return desc;
+  }
+
+  // Align landmarks so the eye line is horizontal and inter-ocular distance = 1.
+  // Makes descriptors invariant to face tilt, position, and scale in the frame.
+  function alignLandmarks(landmarks) {
+    const L = landmarks;
+    if (!L[33] || !L[133] || !L[263] || !L[362]) return landmarks;
+    const lx = (L[33].x + L[133].x) * 0.5,  ly = (L[33].y + L[133].y) * 0.5;
+    const rx = (L[263].x + L[362].x) * 0.5, ry = (L[263].y + L[362].y) * 0.5;
+    const angle = -Math.atan2(ry - ly, rx - lx);
+    const cos   =  Math.cos(angle), sin = Math.sin(angle);
+    const cx = (lx + rx) * 0.5,    cy = (ly + ry) * 0.5;
+    const iod = Math.hypot(rx - lx, ry - ly) || 1;
+    return L.map(pt => {
+      if (!pt) return pt;
+      const tx = pt.x - cx, ty = pt.y - cy;
+      return { x: (tx * cos - ty * sin) / iod, y: (tx * sin + ty * cos) / iod, z: pt.z / iod };
+    });
   }
 
   function normalize(desc) {
@@ -3602,10 +3732,12 @@ function classifyEmotion(blendshapes) {
   function findMatch(desc) {
     let best = null, bestSim = 0;
     const threshold = getThreshold();
+    const TOP_K = 3;
     for (const kf of knownFaces) {
-      // Compare against average descriptor
-      const avgDesc = avgDescriptors(kf.descriptors);
-      const sim = cosine(desc, avgDesc);
+      if (!kf.descriptors.length) continue;
+      // Score against every enrolled sample, average the top-K scores
+      const sims = kf.descriptors.map(d => cosine(desc, d)).sort((a, b) => b - a).slice(0, TOP_K);
+      const sim  = sims.reduce((a, b) => a + b, 0) / sims.length;
       if (sim > bestSim) { bestSim = sim; best = kf; }
     }
     if (bestSim >= threshold) return { person: best, sim: bestSim, pct: Math.round(bestSim * 100) };
@@ -3655,7 +3787,7 @@ function classifyEmotion(blendshapes) {
       try {
         const result = faceLandmarker.detectForVideo(video, performance.now());
         if (result.faceLandmarks.length > 0) {
-          const desc = normalize(toDescriptor(result.faceLandmarks[0]));
+          const desc = normalize(toDescriptor(alignLandmarks(result.faceLandmarks[0])));
           capturePending.samples.push(desc);
           const n = capturePending.samples.length;
           captureBar.style.width = `${(n / capturePending.total) * 100}%`;
@@ -3688,7 +3820,7 @@ function classifyEmotion(blendshapes) {
     } else {
       // Capture avatar from current frame
       const avatar = captureAvatar();
-      knownFaces.push({ name, descriptors: samples, avatar });
+      knownFaces.push({ name, descriptors: samples, avatar, visits: [] });
     }
     saveToStorage();
     updateKnownList();
@@ -3754,7 +3886,7 @@ function classifyEmotion(blendshapes) {
         alert("No face found in the photo. Try a clearer front-facing image.");
         return;
       }
-      const desc = normalize(toDescriptor(result.faceLandmarks[0]));
+      const desc = normalize(toDescriptor(alignLandmarks(result.faceLandmarks[0])));
       const avatarUrl = tmp.toDataURL("image/jpeg", 0.6);
 
       const existing = knownFaces.find(kf => kf.name.toLowerCase() === name.toLowerCase());
@@ -3762,7 +3894,7 @@ function classifyEmotion(blendshapes) {
         existing.descriptors.push(desc);
         if (existing.descriptors.length > 20) existing.descriptors = existing.descriptors.slice(-20);
       } else {
-        knownFaces.push({ name, descriptors: [desc], avatar: avatarUrl });
+        knownFaces.push({ name, descriptors: [desc], avatar: avatarUrl, visits: [] });
       }
       saveToStorage();
       updateKnownList();
@@ -3785,11 +3917,14 @@ function classifyEmotion(blendshapes) {
       const avatarEl = kf.avatar
         ? `<img class="known-avatar" src="${kf.avatar}" alt="${kf.name}" />`
         : `<div class="known-avatar-placeholder">${kf.name[0].toUpperCase()}</div>`;
+      const lastVisit   = kf.visits?.length ? kf.visits[kf.visits.length - 1] : null;
+      const lastSeenStr = lastVisit ? `Last seen: ${timeAgo(lastVisit.ts)}` : "Never seen";
       div.innerHTML = `
         ${avatarEl}
         <div class="known-item-info">
           <span class="known-item-name">${kf.name}</span>
           <span class="known-item-samples">${kf.descriptors.length} sample${kf.descriptors.length !== 1 ? 's' : ''}</span>
+          <span class="known-item-lastseen">${lastSeenStr}</span>
         </div>
         <button class="del" data-idx="${i}" title="Remove">✕</button>`;
       div.querySelector(".del").addEventListener("click", () => {
@@ -3828,13 +3963,35 @@ function classifyEmotion(blendshapes) {
     e.target.value = "";
   });
 
+  // Export visit history as CSV
+  document.getElementById("btn-export-visits")?.addEventListener("click", () => {
+    if (!knownFaces.some(kf => kf.visits?.length)) { alert("No visit history recorded yet."); return; }
+    const rows = ["Name,Date,Time,Confidence%"];
+    for (const kf of knownFaces) {
+      for (const v of (kf.visits || [])) {
+        const d = new Date(v.ts);
+        rows.push(`"${kf.name.replace(/"/g,'""')}",${d.toLocaleDateString()},${d.toLocaleTimeString()},${v.conf}`);
+      }
+    }
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = "facelab_visits.csv"; a.click();
+    URL.revokeObjectURL(url);
+  });
+
   // ── Main recognition loop ────────────────────────────────────────────────
   let running = false;
   let rafId   = null;
   const fps   = makeFPSTracker();
 
-  // Banner state
+  // Banner + drift + visit-log state
   let lastMatchName = null;
+  let driftDirty = false;
+  const VISIT_DEBOUNCE_MS = 30000;
+  const VISIT_MAX = 500;
+  const _lastVisitTs = new Map();
+  setInterval(() => { if (driftDirty) { saveToStorage(); driftDirty = false; } }, 5000);
 
   function updateBanner(match, emotion) {
     // Update emotion badge
@@ -3909,7 +4066,7 @@ function classifyEmotion(blendshapes) {
     }
 
     result.faceLandmarks.forEach((landmarks, fi) => {
-      const desc  = normalize(toDescriptor(landmarks));
+      const desc  = normalize(toDescriptor(alignLandmarks(landmarks)));
       const track = tracked[fi];
       const bx = track.x, by = track.y, bw = track.w, bh = track.h;
 
@@ -3919,6 +4076,27 @@ function classifyEmotion(blendshapes) {
 
       const match = findMatch(desc);
       if (match && (!topMatch || match.sim > topMatch.sim)) topMatch = match;
+
+      // Visit history: log first recognition per person per 30-second window (face 0 only)
+      if (match && fi === 0) {
+        const now  = Date.now();
+        const last = _lastVisitTs.get(match.person.name) || 0;
+        if (now - last >= VISIT_DEBOUNCE_MS) {
+          _lastVisitTs.set(match.person.name, now);
+          const visits = match.person.visits || (match.person.visits = []);
+          visits.push({ ts: now, conf: match.pct });
+          if (visits.length > VISIT_MAX) visits.splice(0, visits.length - VISIT_MAX);
+          driftDirty = true;
+        }
+      }
+
+      // Descriptor drift: high-confidence frames silently improve enrollment
+      if (match && match.sim >= 0.96) {
+        match.person.descriptors.push(desc);
+        if (match.person.descriptors.length > 20)
+          match.person.descriptors = match.person.descriptors.slice(-20);
+        driftDirty = true;
+      }
 
       // Per-face color: matched = teal, unknown = red, use track color for ID label
       const color  = match ? "#00e5ff" : "#ff5252";
@@ -4252,10 +4430,12 @@ function classifyEmotion(blendshapes) {
 // 6. Analysis
 // ─────────────────────────────────────────────────────────────────────────────
 (function () {
-  const btnDemo     = document.getElementById("btn-load-demo");
-  const csvUpload   = document.getElementById("csv-upload");
-  const emptyCharts = document.getElementById("empty-charts");
-  const statsEl     = document.getElementById("analysis-stats");
+  const btnDemo      = document.getElementById("btn-load-demo");
+  const csvUpload    = document.getElementById("csv-upload");
+  const emptyCharts  = document.getElementById("empty-charts");
+  const statsEl      = document.getElementById("analysis-stats");
+  const insightsCard = document.getElementById("analysis-insights");
+  const insightsGrid = document.getElementById("insights-grid");
 
   let charts = {};
 
@@ -4274,9 +4454,9 @@ function classifyEmotion(blendshapes) {
     const rows = [];
     let t = 0, cx = 180, cy = 240, area = 9500, prevErr = 0;
     while (t < durationSec) {
-      cx   = Math.max(50, Math.min(590, cx + (Math.random() - 0.48) * 3));
-      cy   = Math.max(50, Math.min(430, cy + (Math.random() - 0.5 ) * 2));
-      area = Math.max(5000, Math.min(18000, area + (Math.random() - 0.5) * 150));
+      cx   = Math.max(50,   Math.min(590,   cx   + (Math.random() - 0.48) * 5));
+      cy   = Math.max(50,   Math.min(430,   cy   + (Math.random() - 0.5)  * 2));
+      area = Math.max(5000, Math.min(18000, area + (Math.random() - 0.5)  * 200));
       const err = cx - 320;
       const yaw = Math.round(Math.max(-30, Math.min(30, 0.4 * err + 0.1 * (err - prevErr) / dt)));
       prevErr = err;
@@ -4288,89 +4468,195 @@ function classifyEmotion(blendshapes) {
     return rows;
   }
 
-  function getCSS(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
-
   function renderCharts(rows) {
     emptyCharts.classList.add("hidden");
-    statsEl.style.display = "flex";
+    statsEl.style.display = "grid";
 
-    const times   = rows.map(r => r.time);
-    const yaws    = rows.map(r => r.yaw);
-    const cxs     = rows.map(r => r.cx);
-    const areas   = rows.map(r => r.area);
-    const errors  = rows.map(r => r.cx - 320);
+    const times  = rows.map(r => r.time);
+    const yaws   = rows.map(r => r.yaw);
+    const cxs    = rows.map(r => r.cx);
+    const areas  = rows.map(r => r.area);
+    const errors = rows.map(r => r.cx - 320);
+    const absErr = errors.map(Math.abs);
 
-    // Stats
+    // ── Stats ────────────────────────────────────────────────────────────────
     const duration  = Math.max(...times).toFixed(0);
-    const meanErr   = (errors.reduce((a, b) => a + Math.abs(b), 0) / errors.length).toFixed(1);
+    const meanErr   = (absErr.reduce((a, b) => a + b, 0) / absErr.length).toFixed(1);
+    const maxErr    = Math.max(...absErr);
     const centered  = Math.round(errors.filter(e => Math.abs(e) < 30).length / errors.length * 100);
-    document.getElementById("as-duration").textContent = `${duration}s`;
-    document.getElementById("as-mean-err").textContent = `${meanErr}px`;
-    document.getElementById("as-centered").textContent = `${centered}%`;
-    document.getElementById("as-rows").textContent     = rows.length;
+    const stability = Math.round(errors.filter(e => Math.abs(e) < 60).length / errors.length * 100);
+    document.getElementById("as-duration").textContent  = `${duration}s`;
+    document.getElementById("as-mean-err").textContent  = `${meanErr}px`;
+    document.getElementById("as-centered").textContent  = `${centered}%`;
+    document.getElementById("as-max-err").textContent   = `${maxErr}px`;
+    document.getElementById("as-stability").textContent = `${stability}%`;
+    document.getElementById("as-rows").textContent      = rows.length;
 
-    const stepFactor = Math.max(1, Math.floor(rows.length / 300));
-    const sampleRows  = rows.filter((_, i) => i % stepFactor === 0);
-    const sTimes  = sampleRows.map(r => r.time);
-    const sYaws   = sampleRows.map(r => r.yaw);
-    const sCxs    = sampleRows.map(r => r.cx);
-    const sAreas  = sampleRows.map(r => r.area);
-    const sErrors = sampleRows.map(r => r.cx - 320);
+    // ── Downsample for chart rendering ───────────────────────────────────────
+    const step      = Math.max(1, Math.floor(rows.length / 400));
+    const sr        = rows.filter((_, i) => i % step === 0);
+    const sTimes    = sr.map(r => r.time.toFixed(1));
+    const sYaws     = sr.map(r => r.yaw);
+    const sCxs      = sr.map(r => r.cx);
+    const sAreas    = sr.map(r => r.area);
+    const sErrors   = sr.map(r => r.cx - 320);
+    const frameW    = Math.max(...cxs, 640);
 
-    const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-    const gridColor = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)";
+    const isDark    = document.documentElement.getAttribute("data-theme") === "dark";
+    const gridColor = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)";
     const textColor = isDark ? "#8891a8" : "#636878";
 
-    const base = {
-      type: "line",
-      options: {
-        responsive: true,
-        animation: { duration: 300 },
-        plugins: { legend: { display: false } },
-        scales: {
-          x: {
-            ticks: { color: textColor, maxTicksLimit: 8, font: { size: 10, family: "monospace" } },
-            grid:  { color: gridColor }
-          },
-          y: {
-            ticks: { color: textColor, font: { size: 10, family: "monospace" } },
-            grid:  { color: gridColor }
-          }
-        },
-        elements: { point: { radius: 0 }, line: { borderWidth: 2, tension: 0.3 } }
-      }
-    };
-
-    function mkChart(id, labels, data, color, yMin, yMax, refLines = []) {
+    // ── Chart factory ────────────────────────────────────────────────────────
+    function mkChart(id, labels, datasets, yMin, yMax, yUnit = "") {
       if (charts[id]) charts[id].destroy();
-      const datasets = [{
-        data, borderColor: color,
-        backgroundColor: color + "22",
-        fill: true
-      }];
-      refLines.forEach(rl => datasets.push({
-        data: labels.map(() => rl.val),
-        borderColor: rl.color, borderDash: [4, 4],
-        borderWidth: 1, pointRadius: 0, fill: false
-      }));
-      charts[id] = new Chart(document.getElementById(id), {
-        ...base,
+      const canvas = document.getElementById(id);
+      charts[id] = new Chart(canvas, {
+        type: "line",
         data: { labels, datasets },
         options: {
-          ...base.options,
+          responsive: true,
+          maintainAspectRatio: true,
+          animation: { duration: 400, easing: "easeOutQuart" },
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: isDark ? "#1e2533" : "#fff",
+              titleColor: textColor,
+              bodyColor: isDark ? "#c8cdd8" : "#3a3f4a",
+              borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+              borderWidth: 1,
+              padding: 10,
+              callbacks: {
+                title: (items) => `t = ${items[0].label}s`,
+                label: (item) => ` ${item.dataset.label || ""}: ${item.parsed.y}${yUnit}`
+              }
+            }
+          },
           scales: {
-            ...base.options.scales,
-            y: { ...base.options.scales.y, min: yMin, max: yMax }
-          }
+            x: {
+              ticks: { color: textColor, maxTicksLimit: 7, font: { size: 10, family: "monospace" },
+                       callback: v => sTimes[v] + "s" },
+              grid: { color: gridColor }
+            },
+            y: {
+              min: yMin, max: yMax,
+              ticks: { color: textColor, font: { size: 10, family: "monospace" },
+                       callback: v => v + yUnit },
+              grid: { color: gridColor }
+            }
+          },
+          elements: { point: { radius: 0, hoverRadius: 4 }, line: { borderWidth: 2, tension: 0.35 } }
         }
       });
     }
 
-    mkChart("chart-yaw",   sTimes, sYaws,   "#29b6d8", -35, 35, [{ val: 0, color: "#888" }]);
-    mkChart("chart-cx",    sTimes, sCxs,    "#e74c3c", 0,   640, [{ val: 320, color: "#888" }]);
-    mkChart("chart-area",  sTimes, sAreas,  "#f39c12", 0, 20000,
-      [{ val: 8000, color: "#e74c3c" }, { val: 14000, color: "#2ecc87" }]);
-    mkChart("chart-error", sTimes, sErrors, "#a86fdf", -350, 350, [{ val: 0, color: "#888" }]);
+    function gradient(ctx, color1, color2) {
+      const g = ctx.createLinearGradient(0, 0, 0, 180);
+      g.addColorStop(0,   color1);
+      g.addColorStop(1,   color2);
+      return g;
+    }
+
+    // ── Error chart — colored zones ──────────────────────────────────────────
+    const errCtx = document.getElementById("chart-error").getContext("2d");
+    mkChart("chart-error", sTimes,
+      [
+        { data: sErrors, borderColor: "#e05c5c", label: "Error",
+          backgroundColor: gradient(errCtx, "rgba(224,92,92,0.25)", "rgba(224,92,92,0.02)"), fill: true },
+        { data: sTimes.map(() =>  30), borderColor: "rgba(46,204,135,0.5)", borderDash: [4,3], borderWidth: 1, pointRadius: 0, fill: false, label: "+30px zone" },
+        { data: sTimes.map(() => -30), borderColor: "rgba(46,204,135,0.5)", borderDash: [4,3], borderWidth: 1, pointRadius: 0, fill: false, label: "-30px zone" },
+        { data: sTimes.map(() =>   0), borderColor: "rgba(255,255,255,0.2)", borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, label: "center" }
+      ],
+      -Math.ceil(maxErr * 1.2 / 50) * 50,
+       Math.ceil(maxErr * 1.2 / 50) * 50,
+      "px"
+    );
+
+    // ── Yaw chart ────────────────────────────────────────────────────────────
+    const yawCtx = document.getElementById("chart-yaw").getContext("2d");
+    mkChart("chart-yaw", sTimes,
+      [
+        { data: sYaws, borderColor: "#00e5ff", label: "Yaw",
+          backgroundColor: gradient(yawCtx, "rgba(0,229,255,0.2)", "rgba(0,229,255,0.02)"), fill: true },
+        { data: sTimes.map(() => 0), borderColor: "rgba(255,255,255,0.15)", borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, label: "zero" }
+      ],
+      -35, 35, ""
+    );
+
+    // ── Face X position chart ────────────────────────────────────────────────
+    const cxCtx = document.getElementById("chart-cx").getContext("2d");
+    mkChart("chart-cx", sTimes,
+      [
+        { data: sCxs, borderColor: "#a86fdf", label: "Face X",
+          backgroundColor: gradient(cxCtx, "rgba(168,111,223,0.2)", "rgba(168,111,223,0.02)"), fill: true },
+        { data: sTimes.map(() => frameW / 2), borderColor: "rgba(255,255,255,0.3)", borderDash: [4,3], borderWidth: 1, pointRadius: 0, fill: false, label: "center" }
+      ],
+      0, frameW, "px"
+    );
+
+    // ── Area chart ───────────────────────────────────────────────────────────
+    const areaCtx = document.getElementById("chart-area").getContext("2d");
+    mkChart("chart-area", sTimes,
+      [
+        { data: sAreas, borderColor: "#f39c12", label: "Area",
+          backgroundColor: gradient(areaCtx, "rgba(243,156,18,0.2)", "rgba(243,156,18,0.02)"), fill: true },
+        { data: sTimes.map(() => 8000),  borderColor: "rgba(224,92,92,0.6)",  borderDash: [4,3], borderWidth: 1, pointRadius: 0, fill: false, label: "too far" },
+        { data: sTimes.map(() => 14000), borderColor: "rgba(46,204,135,0.6)", borderDash: [4,3], borderWidth: 1, pointRadius: 0, fill: false, label: "too close" }
+      ],
+      0, 22000, ""
+    );
+
+    // ── Insights ─────────────────────────────────────────────────────────────
+    insightsCard.classList.remove("hidden");
+    const yawVariance = sYaws.reduce((s, v) => s + v * v, 0) / sYaws.length;
+    const corrCount   = yaws.filter((v, i) => i > 0 && Math.sign(v) !== Math.sign(yaws[i-1]) && Math.abs(v) > 2).length;
+
+    function grade(val, good, fair) {
+      return val >= good ? "good" : val >= fair ? "fair" : "poor";
+    }
+    const insights = [
+      {
+        label: "Tracking Quality",
+        badge: grade(centered, 40, 20),
+        text: centered >= 40
+          ? `Face was centered ≥40% of the time — good tracking performance.`
+          : centered >= 20
+          ? `Face was centered ${centered}% of the time — consider tuning Kp up slightly.`
+          : `Only ${centered}% centered — Kp may be too low or the face was moving very fast.`
+      },
+      {
+        label: "Controller Stability",
+        badge: grade(stability, 80, 55),
+        text: stability >= 80
+          ? `${stability}% of frames within ±60px — controller is stable with minimal oscillation.`
+          : stability >= 55
+          ? `${stability}% within ±60px — moderate stability. Try increasing Kd to damp oscillations.`
+          : `Only ${stability}% within ±60px — high oscillation detected. Reduce Kp or increase Kd.`
+      },
+      {
+        label: "Response Aggressiveness",
+        badge: grade(100 - Math.min(corrCount / 5, 100), 60, 30),
+        text: corrCount < 50
+          ? `${corrCount} direction changes — smooth control, low oscillation risk.`
+          : corrCount < 150
+          ? `${corrCount} direction changes — moderate. Slight Kd increase may help.`
+          : `${corrCount} direction changes — very reactive. Controller may be oscillating; lower Kp.`
+      },
+      {
+        label: "Distance Control",
+        badge: rows.some(r => r.fb !== 0) ? "fair" : "good",
+        text: rows.some(r => r.fb !== 0)
+          ? `Forward/backward corrections were made — face moved in/out of optimal distance zone.`
+          : `No distance corrections needed — face stayed within the optimal area range throughout.`
+      }
+    ];
+
+    insightsGrid.innerHTML = insights.map(ins => `
+      <div class="insight-row">
+        <span class="insight-badge badge-${ins.badge}">${ins.badge}</span>
+        <span class="insight-text"><span class="insight-label">${ins.label}</span>${ins.text}</span>
+      </div>`).join("");
   }
 
   btnDemo.addEventListener("click", () => renderCharts(generateDemo()));
